@@ -128,6 +128,23 @@ func (l *Lexer) consumeNumber() Token {
 		l.column++
 	}
 	
+	// Verificar si hay letras inmediatamente después del número (error)
+	if l.position < len(l.input) && unicode.IsLetter(rune(l.input[l.position])) {
+		// Consumir las letras para incluirlas en el token de error
+		for l.position < len(l.input) && (unicode.IsLetter(rune(l.input[l.position])) || unicode.IsDigit(rune(l.input[l.position]))) {
+			l.position++
+			l.column++
+		}
+		
+		return Token{
+			Type:     UNKNOWN,
+			Value:    l.input[start:l.position],
+			Position: start,
+			Line:     l.line,
+			Column:   startCol,
+		}
+	}
+	
 	return Token{
 		Type:     NUMBER,
 		Value:    l.input[start:l.position],

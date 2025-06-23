@@ -1,3 +1,4 @@
+
 package main
 
 import (
@@ -41,23 +42,35 @@ func (p *Parser) parseVariableDeclaration() {
 		return
 	}
 	
-	// Valor
+	// Valor - verificar que sea válido
 	token := p.currentToken()
 	if token == nil {
 		p.addError("Se esperaba valor en declaración")
 		return
 	}
 	
-	if token.Type == NUMBER || token.Type == IDENTIFIER {
+	if token.Type == NUMBER {
 		p.position++
+	} else if token.Type == IDENTIFIER {
+		p.position++
+	} else if token.Type == UNKNOWN {
+		p.addError(fmt.Sprintf("Número mal formado '%s' en línea %d, columna %d", token.Value, token.Line, token.Column))
+		p.position++
+		return
 	} else {
 		p.addError(fmt.Sprintf("Se esperaba número o identificador, se encontró %s", token.Type))
 		return
 	}
 	
-	// Punto y coma
-	if !p.consume(SEMICOLON) {
-		return
+	// Punto y coma (opcional - solo advertencia si falta)
+	if p.currentToken() != nil && p.currentToken().Type == SEMICOLON {
+		p.position++
+	} else {
+		// Verificar si la siguiente línea tiene contenido
+		nextToken := p.currentToken()
+		if nextToken != nil && nextToken.Line == token.Line {
+			p.addError(fmt.Sprintf("Se esperaba punto y coma o salto de línea después de la declaración en línea %d", token.Line))
+		}
 	}
 }
 
@@ -297,13 +310,13 @@ func (p *Parser) parseStatements() {
 }
 
 func (p *Parser) parseStatement() {
-	// Simplificado - puede ser una llamada a función como console.log()
+	// Simplificado - puede ser una llamada a función como console.log() o asignación
 	token := p.currentToken()
 	if token == nil {
 		return
 	}
 	
-	// Identificador (console, system, etc.)
+	// Identificador (console, system, variable, etc.)
 	if token.Type == IDENTIFIER || token.Type == KEYWORD {
 		p.position++
 		
@@ -321,17 +334,78 @@ func (p *Parser) parseStatement() {
 			
 			// Argumentos (simplificado)
 			for p.currentToken() != nil && p.currentToken().Type != RPAREN {
+				if p.currentToken().Type == UNKNOWN {
+					p.addError(fmt.Sprintf("Token inválido '%s' en expresión en línea %d, columna %d", 
+						p.currentToken().Value, p.currentToken().Line, p.currentToken().Column))
+				}
 				p.position++
 			}
 			
 			if p.currentToken() != nil && p.currentToken().Type == RPAREN {
 				p.position++
 			}
+		} else if p.currentToken() != nil && p.currentToken().Type == ASSIGNMENT {
+			// Es una asignación
+			p.position++ // consume '='
+			
+			// Parsear expresión del lado derecho
+			p.parseExpression()
 		}
 		
-		// Punto y coma
+		// Punto y coma (opcional)
 		if p.currentToken() != nil && p.currentToken().Type == SEMICOLON {
 			p.position++
+		}
+	}
+}
+
+func (p *Parser) parseExpression() {
+	// Parsear expresión simple (número, variable, o operación)
+	lastTokenType := ""
+	
+	for p.currentToken() != nil && 
+		(p.currentToken().Type == NUMBER || 
+		 p.currentToken().Type == IDENTIFIER || 
+		 p.currentToken().Type == OPERATOR ||
+		 p.currentToken().Type == UNKNOWN) {
+		
+		currentToken := p.currentToken()
+		
+		if currentToken.Type == UNKNOWN {
+			p.addError(fmt.Sprintf("Token inválido '%s' en expresión en línea %d, columna %d", 
+				currentToken.Value, currentToken.Line, currentToken.Column))
+		}
+		
+		// Verificar secuencias inválidas
+		if lastTokenType == "NUMBER" && currentToken.Type == IDENTIFIER {
+			p.addError(fmt.Sprintf("Error de sintaxis: número '%s' seguido de identificador '%s' sin operador en línea %d, columna %d", 
+				p.tokens[p.position-1].Value, currentToken.Value, currentToken.Line, currentToken.Column))
+		}
+		
+		if lastTokenType == "IDENTIFIER" && currentToken.Type == NUMBER {
+			p.addError(fmt.Sprintf("Error de sintaxis: identificador '%s' seguido de número '%s' sin operador en línea %d, columna %d", 
+				p.tokens[p.position-1].Value, currentToken.Value, currentToken.Line, currentToken.Column))
+		}
+		
+		if lastTokenType == "NUMBER" && currentToken.Type == NUMBER {
+			p.addError(fmt.Sprintf("Error de sintaxis: dos números consecutivos '%s' '%s' sin operador en línea %d, columna %d", 
+				p.tokens[p.position-1].Value, currentToken.Value, currentToken.Line, currentToken.Column))
+		}
+		
+		if lastTokenType == "IDENTIFIER" && currentToken.Type == IDENTIFIER {
+			p.addError(fmt.Sprintf("Error de sintaxis: dos identificadores consecutivos '%s' '%s' sin operador en línea %d, columna %d", 
+				p.tokens[p.position-1].Value, currentToken.Value, currentToken.Line, currentToken.Column))
+		}
+		
+		lastTokenType = string(currentToken.Type)
+		p.position++
+		
+		// Salir si llegamos a un delimitador
+		if p.currentToken() != nil && 
+			(p.currentToken().Type == SEMICOLON || 
+			 p.currentToken().Type == RBRACE ||
+			 p.currentToken().Type == RPAREN) {
+			break
 		}
 	}
 }

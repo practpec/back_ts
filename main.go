@@ -58,7 +58,7 @@ func analyzeHandler(w http.ResponseWriter, r *http.Request) {
 	// Verificar si hay errores semánticos
 	hasSemanticErrors := false
 	for _, info := range semanticInfo {
-		if strings.Contains(info, "❌ ERROR SEMÁNTICO") {
+		if strings.Contains(info, "❌ ERROR SEMÁNTICO") || strings.Contains(info, "❌ ERROR SINTÁCTICO") || strings.Contains(info, "❌ ERROR LÉXICO") {
 			hasSemanticErrors = true
 			break
 		}

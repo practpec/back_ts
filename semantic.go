@@ -1,10 +1,10 @@
-
 package main
 
 import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type Semantic struct {
@@ -20,8 +20,67 @@ type VariableInfo struct {
 	Line         int
 	Column       int
 }
+
+func NewSemantic(tokens []Token) *Semantic {
+	return &Semantic{
+		tokens:      tokens,
+		variables:   make(map[string]VariableInfo),
+		information: []string{},
+	}
+}
+
 func (s *Semantic) addInfo(message string) {
 	s.information = append(s.information, message)
+}
+func (s *Semantic) detectMalformedNumbers() {
+	for _, token := range s.tokens {
+		if token.Type == UNKNOWN {
+			// Verificar si parece un número mal formado
+			if len(token.Value) > 0 && unicode.IsDigit(rune(token.Value[0])) {
+				s.addInfo(fmt.Sprintf("❌ ERROR LÉXICO: Número mal formado '%s' en línea %d, columna %d", 
+					token.Value, token.Line, token.Column))
+			}
+		}
+	}
+}
+
+func (s *Semantic) detectInvalidExpressions() {
+	for i := 0; i < len(s.tokens)-1; i++ {
+		currentToken := s.tokens[i]
+		nextToken := s.tokens[i+1]
+		
+		// Verificar patrones inválidos de tokens consecutivos
+		if currentToken.Type == NUMBER && nextToken.Type == IDENTIFIER {
+			// Verificar que no haya operador entre ellos
+			if currentToken.Line == nextToken.Line {
+				s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Número '%s' seguido de identificador '%s' sin operador en línea %d", 
+					currentToken.Value, nextToken.Value, currentToken.Line))
+			}
+		}
+		
+		if currentToken.Type == IDENTIFIER && nextToken.Type == NUMBER {
+			if currentToken.Line == nextToken.Line && !s.isReservedWord(currentToken.Value) {
+				s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Identificador '%s' seguido de número '%s' sin operador en línea %d", 
+					currentToken.Value, nextToken.Value, currentToken.Line))
+			}
+		}
+		
+		if currentToken.Type == NUMBER && nextToken.Type == NUMBER {
+			if currentToken.Line == nextToken.Line {
+				s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Dos números consecutivos '%s' '%s' sin operador en línea %d", 
+					currentToken.Value, nextToken.Value, currentToken.Line))
+			}
+		}
+		
+		if currentToken.Type == IDENTIFIER && nextToken.Type == IDENTIFIER {
+			if currentToken.Line == nextToken.Line && 
+				!s.isReservedWord(currentToken.Value) && 
+				!s.isReservedWord(nextToken.Value) {
+				s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Dos identificadores consecutivos '%s' '%s' sin operador en línea %d", 
+					currentToken.Value, nextToken.Value, currentToken.Line))
+			}
+		}
+	}
 }
 func (s *Semantic) analyzeDoWhileLoop() {
 	doFound := false
@@ -104,13 +163,6 @@ func (s *Semantic) isReservedWord(word string) bool {
 		"length":  true,
 	}
 	return reservedWords[strings.ToLower(word)]
-}
-func NewSemantic(tokens []Token) *Semantic {
-	return &Semantic{
-		tokens:      tokens,
-		variables:   make(map[string]VariableInfo),
-		information: []string{},
-	}
 }
 
 func (s *Semantic) Analyze() []string {
