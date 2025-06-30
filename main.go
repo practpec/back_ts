@@ -11,13 +11,13 @@ import (
 	"github.com/gorilla/mux"
 )
 
-type AnalysisRequestC struct {
+type AnalysisRequestJ struct {
 	Code string `json:"code"`
 }
 
-type AnalysisResponseC struct {
+type AnalysisResponseJ struct {
 	IsValid      bool     `json:"isValid"`
-	Tokens       []TokenC `json:"tokens"`
+	Tokens       []TokenJ `json:"tokens"`
 	SyntaxErrors []string `json:"syntaxErrors"`
 	SemanticInfo []string `json:"semanticInfo"`
 }
@@ -30,34 +30,35 @@ func main() {
 	methods := handlers.AllowedMethods([]string{"GET", "POST", "PUT", "DELETE"})
 	origins := handlers.AllowedOrigins([]string{"*"})
 
-	// Endpoint para análisis de código C/C++
-	r.HandleFunc("/analyze-c", analyzeCHandler).Methods("POST")
+	// Endpoint para análisis de código Java
+	r.HandleFunc("/analyze-java", analyzeJavaHandler).Methods("POST")
 	
-	// Mantener endpoint original de TypeScript (comentado por ahora)
+	// Mantener endpoints anteriores (comentados por ahora)
+	// r.HandleFunc("/analyze-c", analyzeCHandler).Methods("POST")
 	// r.HandleFunc("/analyze", analyzeHandler).Methods("POST")
 
 	fmt.Println("Servidor iniciado en puerto 8080")
-	fmt.Println("Endpoint disponible: /analyze-c (para código C/C++)")
+	fmt.Println("Endpoint disponible: /analyze-java (para código Java)")
 	log.Fatal(http.ListenAndServe(":8080", handlers.CORS(headers, methods, origins)(r)))
 }
 
-func analyzeCHandler(w http.ResponseWriter, r *http.Request) {
-	var req AnalysisRequestC
+func analyzeJavaHandler(w http.ResponseWriter, r *http.Request) {
+	var req AnalysisRequestJ
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Error al decodificar JSON", http.StatusBadRequest)
 		return
 	}
 
 	// Análisis léxico
-	lexer := NewLexerC(req.Code)
+	lexer := NewLexerJ(req.Code)
 	tokens := lexer.Tokenize()
 
 	// Análisis sintáctico
-	parser := NewParserC(tokens)
+	parser := NewParserJ(tokens)
 	syntaxErrors := parser.Parse()
 
 	// Análisis semántico
-	semantic := NewSemanticC(tokens)
+	semantic := NewSemanticJ(tokens)
 	semanticInfo := semantic.Analyze()
 
 	// Verificar si hay errores semánticos
@@ -69,7 +70,7 @@ func analyzeCHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	response := AnalysisResponseC{
+	response := AnalysisResponseJ{
 		IsValid:      len(syntaxErrors) == 0 && !hasSemanticErrors,
 		Tokens:       tokens,
 		SyntaxErrors: syntaxErrors,
