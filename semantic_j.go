@@ -406,6 +406,7 @@ func (s *SemanticJ) analyzeSystemOutArguments(startPos int, systemLine int) bool
 	pos := startPos
 	argumentCount := 0
 	hasErrors := false
+	hasStringConcatenation := false
 	
 	// Buscar hasta el paréntesis de cierre
 	for pos < len(s.tokens) && s.tokens[pos].Type != RPAREN_J {
@@ -416,19 +417,28 @@ func (s *SemanticJ) analyzeSystemOutArguments(startPos int, systemLine int) bool
 			s.addInfo(fmt.Sprintf("✓ Argumento String válido: %s", token.Value))
 			pos++
 			
-			// Verificar que después del string NO haya nada más que ) o ,
-			if pos < len(s.tokens) && s.tokens[pos].Type != RPAREN_J && s.tokens[pos].Type != COMMA_J {
+			// Verificar si hay concatenación después del string
+			if pos < len(s.tokens) && s.tokens[pos].Type == OPERATOR_J && s.tokens[pos].Value == "+" {
+				hasStringConcatenation = true
+				s.addInfo("✓ Concatenación detectada - Operador '+' válido para unir strings")
+				pos++ // consumir el +
+				continue // continuar analizando el siguiente elemento
+			}
+			
+			// Si hay otro token que NO sea ) o + después del string, es error
+			if pos < len(s.tokens) && s.tokens[pos].Type != RPAREN_J && 
+			   !(s.tokens[pos].Type == OPERATOR_J && s.tokens[pos].Value == "+") {
 				nextToken := s.tokens[pos]
-				if nextToken.Type == OPERATOR_J {
-					s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Operador '%s' NO permitido dentro de println() en línea %d", 
+				if nextToken.Type == OPERATOR_J && nextToken.Value != "+" {
+					s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Operador '%s' NO permitido dentro de println() - Solo '+' para concatenación en línea %d", 
 						nextToken.Value, nextToken.Line))
 					hasErrors = true
-				} else {
+				} else if nextToken.Type != COMMA_J {
 					s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Token '%s' NO permitido después de String en println() en línea %d", 
 						nextToken.Value, nextToken.Line))
 					hasErrors = true
 				}
-				pos++ // consumir el token inválido
+				pos++
 			}
 			
 		} else if token.Type == IDENTIFIER_J {
@@ -443,13 +453,36 @@ func (s *SemanticJ) analyzeSystemOutArguments(startPos int, systemLine int) bool
 			}
 			pos++
 			
+			// Verificar si hay concatenación después de la variable
+			if pos < len(s.tokens) && s.tokens[pos].Type == OPERATOR_J && s.tokens[pos].Value == "+" {
+				hasStringConcatenation = true
+				s.addInfo("✓ Concatenación detectada - Operador '+' válido para unir elementos")
+				pos++ // consumir el +
+				continue // continuar analizando el siguiente elemento
+			}
+			
 		} else if token.Type == NUMBER_J {
 			argumentCount++
 			s.addInfo(fmt.Sprintf("✓ Número válido como argumento: %s", token.Value))
 			pos++
 			
-		} else if token.Type == OPERATOR_J {
-			s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Operador '%s' NO permitido dentro de println() en línea %d", 
+			// Verificar concatenación después del número
+			if pos < len(s.tokens) && s.tokens[pos].Type == OPERATOR_J && s.tokens[pos].Value == "+" {
+				hasStringConcatenation = true
+				s.addInfo("✓ Concatenación detectada - Operador '+' válido para unir elementos")
+				pos++ // consumir el +
+				continue
+			}
+			
+		} else if token.Type == OPERATOR_J && token.Value == "+" {
+			// Si llegamos aquí, significa que hay un + sin elemento previo válido
+			s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Operador '+' sin elemento previo válido en línea %d", 
+				token.Line))
+			hasErrors = true
+			pos++
+			
+		} else if token.Type == OPERATOR_J && token.Value != "+" {
+			s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Operador '%s' NO permitido dentro de println() - Solo '+' para concatenación en línea %d", 
 				token.Value, token.Line))
 			hasErrors = true
 			pos++
@@ -480,13 +513,11 @@ func (s *SemanticJ) analyzeSystemOutArguments(startPos int, systemLine int) bool
 		hasErrors = true
 	}
 	
-	// Verificar cantidad de argumentos
+	// Verificar cantidad de argumentos considerando concatenación
 	if argumentCount == 0 {
 		s.addInfo("ℹ️ println() sin argumentos - imprimirá línea vacía")
-	} else if argumentCount > 1 {
-		s.addInfo(fmt.Sprintf("❌ ERROR SEMÁNTICO: println() tiene %d argumentos - DEBE tener exactamente 1 en línea %d", 
-			argumentCount, systemLine))
-		hasErrors = true
+	} else if hasStringConcatenation {
+		s.addInfo("✓ Concatenación de strings válida - Java permite unir múltiples elementos con '+'")
 	}
 	
 	return !hasErrors
@@ -590,11 +621,12 @@ func (s *SemanticJ) detectMalformedTokens() {
 			}
 		}
 		
-		// Detectar strings mal formados con operadores después
+		// NO marcar error para concatenación válida de strings
 		if token.Type == STRING_J && i+1 < len(s.tokens) {
 			nextToken := s.tokens[i+1]
-			if nextToken.Type == OPERATOR_J {
-				s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Operador '%s' después de String NO permitido en línea %d", 
+			// Solo marcar error si NO es el operador + para concatenación
+			if nextToken.Type == OPERATOR_J && nextToken.Value != "+" {
+				s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Operador '%s' después de String NO permitido en línea %d - Use '+' para concatenación", 
 					nextToken.Value, nextToken.Line))
 			}
 		}
