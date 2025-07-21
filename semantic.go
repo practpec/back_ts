@@ -1,9 +1,7 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
-	"strings"
 	"unicode"
 )
 
@@ -21,74 +19,97 @@ type VariableInfo struct {
 	Column       int
 }
 
+// Mapa estático global para palabras reservadas (máxima eficiencia)
+var reservedWords = map[string]bool{
+	"console": true,
+	"log":     true,
+	"system":  true,
+	"out":     true,
+	"println": true,
+	"print":   true,
+	"length":  true,
+}
+
+// Strings constantes para tipos de inferencia (evitar creaciones repetidas)
+const (
+	typeNumber   = "number"
+	typeString   = "string"
+	typeVariable = "variable"
+	typeConstant = "constant"
+	typeUnknown  = "unknown"
+)
+
 func NewSemantic(tokens []Token) *Semantic {
 	return &Semantic{
 		tokens:      tokens,
-		variables:   make(map[string]VariableInfo),
-		information: []string{},
+		variables:   make(map[string]VariableInfo, 16), // Pre-allocar con capacidad
+		information: make([]string, 0, 32),             // Pre-allocar
 	}
 }
 
 func (s *Semantic) addInfo(message string) {
 	s.information = append(s.information, message)
 }
+
+func (s *Semantic) Analyze() []string {
+	s.analyzeVariableDeclarations()
+	s.analyzeForLoop()
+	s.checkVariableUsage()
+	s.analyzeInfiniteLoop()
+	s.detectUndeclaredVariables()
+	s.detectMalformedNumbers()
+	s.detectInvalidExpressions()
+	s.analyzeDoWhileLoop()
+	return s.information
+}
+
 func (s *Semantic) detectMalformedNumbers() {
-	for _, token := range s.tokens {
-		if token.Type == UNKNOWN {
-			// Verificar si parece un número mal formado
-			if len(token.Value) > 0 && unicode.IsDigit(rune(token.Value[0])) {
-				s.addInfo(fmt.Sprintf("❌ ERROR LÉXICO: Número mal formado '%s' en línea %d, columna %d", 
-					token.Value, token.Line, token.Column))
-			}
+	for i := range s.tokens {
+		if s.tokens[i].Type == UNKNOWN && len(s.tokens[i].Value) > 0 && 
+		   unicode.IsDigit(rune(s.tokens[i].Value[0])) {
+			s.addInfo("❌ ERROR LÉXICO: Número mal formado '" + s.tokens[i].Value + 
+				"' en línea " + strconv.Itoa(s.tokens[i].Line) + 
+				", columna " + strconv.Itoa(s.tokens[i].Column))
 		}
 	}
 }
 
 func (s *Semantic) detectInvalidExpressions() {
 	for i := 0; i < len(s.tokens)-1; i++ {
-		currentToken := s.tokens[i]
-		nextToken := s.tokens[i+1]
+		current := &s.tokens[i]
+		next := &s.tokens[i+1]
 		
-		// Verificar patrones inválidos de tokens consecutivos
-		if currentToken.Type == NUMBER && nextToken.Type == IDENTIFIER {
-			// Verificar que no haya operador entre ellos
-			if currentToken.Line == nextToken.Line {
-				s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Número '%s' seguido de identificador '%s' sin operador en línea %d", 
-					currentToken.Value, nextToken.Value, currentToken.Line))
-			}
+		if current.Line != next.Line {
+			continue
 		}
 		
-		if currentToken.Type == IDENTIFIER && nextToken.Type == NUMBER {
-			if currentToken.Line == nextToken.Line && !s.isReservedWord(currentToken.Value) {
-				s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Identificador '%s' seguido de número '%s' sin operador en línea %d", 
-					currentToken.Value, nextToken.Value, currentToken.Line))
-			}
-		}
-		
-		if currentToken.Type == NUMBER && nextToken.Type == NUMBER {
-			if currentToken.Line == nextToken.Line {
-				s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Dos números consecutivos '%s' '%s' sin operador en línea %d", 
-					currentToken.Value, nextToken.Value, currentToken.Line))
-			}
-		}
-		
-		if currentToken.Type == IDENTIFIER && nextToken.Type == IDENTIFIER {
-			if currentToken.Line == nextToken.Line && 
-				!s.isReservedWord(currentToken.Value) && 
-				!s.isReservedWord(nextToken.Value) {
-				s.addInfo(fmt.Sprintf("❌ ERROR SINTÁCTICO: Dos identificadores consecutivos '%s' '%s' sin operador en línea %d", 
-					currentToken.Value, nextToken.Value, currentToken.Line))
-			}
+		switch {
+		case current.Type == NUMBER && next.Type == IDENTIFIER:
+			s.addInfo("❌ ERROR SINTÁCTICO: Número '" + current.Value + 
+				"' seguido de identificador '" + next.Value + 
+				"' sin operador en línea " + strconv.Itoa(current.Line))
+		case current.Type == IDENTIFIER && next.Type == NUMBER && !s.isReservedWord(current.Value):
+			s.addInfo("❌ ERROR SINTÁCTICO: Identificador '" + current.Value + 
+				"' seguido de número '" + next.Value + 
+				"' sin operador en línea " + strconv.Itoa(current.Line))
+		case current.Type == NUMBER && next.Type == NUMBER:
+			s.addInfo("❌ ERROR SINTÁCTICO: Dos números consecutivos '" + current.Value + 
+				"' '" + next.Value + "' sin operador en línea " + strconv.Itoa(current.Line))
+		case current.Type == IDENTIFIER && next.Type == IDENTIFIER && 
+			!s.isReservedWord(current.Value) && !s.isReservedWord(next.Value):
+			s.addInfo("❌ ERROR SINTÁCTICO: Dos identificadores consecutivos '" + current.Value + 
+				"' '" + next.Value + "' sin operador en línea " + strconv.Itoa(current.Line))
 		}
 	}
 }
+
 func (s *Semantic) analyzeDoWhileLoop() {
 	doFound := false
 	whileFound := false
 	var conditionVar string
 	
 	for i := 0; i < len(s.tokens); i++ {
-		token := s.tokens[i]
+		token := &s.tokens[i]
 		
 		if token.Type == DO {
 			doFound = true
@@ -99,7 +120,6 @@ func (s *Semantic) analyzeDoWhileLoop() {
 			whileFound = true
 			s.addInfo("Cláusula 'while' encontrada en bucle do-while")
 			
-			// Buscar la condición después de while
 			if i+2 < len(s.tokens) && s.tokens[i+1].Type == LPAREN {
 				condPos := i + 2
 				for condPos < len(s.tokens) && s.tokens[condPos].Type != RPAREN {
@@ -111,13 +131,14 @@ func (s *Semantic) analyzeDoWhileLoop() {
 				}
 				
 				if conditionVar != "" {
-					s.addInfo(fmt.Sprintf("Variable en condición do-while: '%s'", conditionVar))
+					s.addInfo("Variable en condición do-while: '" + conditionVar + "'")
 					
-					// Verificar si la variable está declarada
 					if _, exists := s.variables[conditionVar]; !exists {
-						s.addInfo(fmt.Sprintf("❌ ERROR SEMÁNTICO: Variable '%s' en condición do-while no está declarada", conditionVar))
+						s.addInfo("❌ ERROR SEMÁNTICO: Variable '" + conditionVar + 
+							"' en condición do-while no está declarada")
 					} else {
-						s.addInfo(fmt.Sprintf("✓ Variable '%s' en condición do-while está correctamente declarada", conditionVar))
+						s.addInfo("✓ Variable '" + conditionVar + 
+							"' en condición do-while está correctamente declarada")
 					}
 				}
 			}
@@ -130,127 +151,102 @@ func (s *Semantic) analyzeDoWhileLoop() {
 		s.addInfo("❌ ERROR SEMÁNTICO: Bucle 'do' sin cláusula 'while' correspondiente")
 	}
 }
+
 func (s *Semantic) detectUndeclaredVariables() {
-	// Encontrar todas las variables usadas
-	usedVariables := make(map[string][]int) // variable -> posiciones donde se usa
+	usedVariables := make(map[string]int, 16) // Pre-allocar
 	
-	for i, token := range s.tokens {
-		if token.Type == IDENTIFIER {
-			// Excluir palabras reservadas como 'console', 'log', 'out', 'println', etc.
-			if !s.isReservedWord(token.Value) {
-				usedVariables[token.Value] = append(usedVariables[token.Value], i)
+	for i := range s.tokens {
+		if s.tokens[i].Type == IDENTIFIER && !s.isReservedWord(s.tokens[i].Value) {
+			if _, exists := usedVariables[s.tokens[i].Value]; !exists {
+				usedVariables[s.tokens[i].Value] = i
 			}
 		}
 	}
 	
-	// Verificar que todas las variables usadas estén declaradas
-	for varName, positions := range usedVariables {
+	for varName, tokenIndex := range usedVariables {
 		if _, declared := s.variables[varName]; !declared {
-			s.addInfo(fmt.Sprintf("❌ ERROR SEMÁNTICO: Variable '%s' usada sin declarar (línea %d)", 
-				varName, s.tokens[positions[0]].Line))
+			s.addInfo("❌ ERROR SEMÁNTICO: Variable '" + varName + 
+				"' usada sin declarar (línea " + strconv.Itoa(s.tokens[tokenIndex].Line) + ")")
 		}
 	}
 }
 
+// Función optimizada con lookup directo
 func (s *Semantic) isReservedWord(word string) bool {
-	reservedWords := map[string]bool{
-		"console": true,
-		"log":     true,
-		"system":  true,
-		"out":     true,
-		"println": true,
-		"print":   true,
-		"length":  true,
-	}
-	return reservedWords[strings.ToLower(word)]
-}
-
-func (s *Semantic) Analyze() []string {
-	s.analyzeVariableDeclarations()
-	s.analyzeForLoop()
-	s.checkVariableUsage()
-	s.analyzeInfiniteLoop()
-	s.detectUndeclaredVariables() // Nueva función
-	return s.information
+	return reservedWords[word]
 }
 
 func (s *Semantic) analyzeVariableDeclarations() {
 	for i := 0; i < len(s.tokens); i++ {
-		token := s.tokens[i]
+		token := &s.tokens[i]
 		
-		// Buscar declaraciones de variables (let, const, var, int, etc.)
-		if token.Type == KEYWORD || token.Type == TYPE {
-			if i+1 < len(s.tokens) && s.tokens[i+1].Type == IDENTIFIER {
-				varName := s.tokens[i+1].Value
-				varType := s.inferType(token.Value)
-				
-				// Verificar si hay declaración de tipo TypeScript (: tipo)
-				nextPos := i + 2
-				if nextPos < len(s.tokens) && s.tokens[nextPos].Type == COLON {
-					nextPos++ // saltar ':'
-					if nextPos < len(s.tokens) && (s.tokens[nextPos].Type == TYPE || s.tokens[nextPos].Type == IDENTIFIER) {
-						varType = s.tokens[nextPos].Value
-						nextPos++ // saltar tipo
-					}
+		if (token.Type == KEYWORD || token.Type == TYPE) && 
+		   i+1 < len(s.tokens) && s.tokens[i+1].Type == IDENTIFIER {
+			
+			varName := s.tokens[i+1].Value
+			varType := s.inferType(token.Value)
+			
+			nextPos := i + 2
+			if nextPos < len(s.tokens) && s.tokens[nextPos].Type == COLON {
+				nextPos++
+				if nextPos < len(s.tokens) && 
+				   (s.tokens[nextPos].Type == TYPE || s.tokens[nextPos].Type == IDENTIFIER) {
+					varType = s.tokens[nextPos].Value
+					nextPos++
 				}
-				
-				var initialValue string
-				if nextPos < len(s.tokens) && s.tokens[nextPos].Type == ASSIGNMENT {
-					nextPos++ // saltar '='
-					if nextPos < len(s.tokens) {
-						initialValue = s.tokens[nextPos].Value
-					}
-				}
-				
-				s.variables[varName] = VariableInfo{
-					Name:         varName,
-					Type:         varType,
-					InitialValue: initialValue,
-					Line:         token.Line,
-					Column:       token.Column,
-				}
-				
-				s.addInfo(fmt.Sprintf("Variable '%s' declarada como tipo '%s' con valor inicial '%s' en línea %d", 
-					varName, varType, initialValue, token.Line))
-				
-				// Saltar los tokens procesados
-				i = nextPos
 			}
+			
+			var initialValue string
+			if nextPos < len(s.tokens) && s.tokens[nextPos].Type == ASSIGNMENT {
+				nextPos++
+				if nextPos < len(s.tokens) {
+					initialValue = s.tokens[nextPos].Value
+				}
+			}
+			
+			s.variables[varName] = VariableInfo{
+				Name:         varName,
+				Type:         varType,
+				InitialValue: initialValue,
+				Line:         token.Line,
+				Column:       token.Column,
+			}
+			
+			s.addInfo("Variable '" + varName + "' declarada como tipo '" + varType + 
+				"' con valor inicial '" + initialValue + "' en línea " + strconv.Itoa(token.Line))
+			
+			i = nextPos
 		}
 	}
 }
 
 func (s *Semantic) analyzeForLoop() {
 	forFound := false
-	var loopVar string
-	var conditionVar string
-	var incrementVar string
+	var loopVar, conditionVar, incrementVar string
 	var startValue, endValue int
 	var hasCondition bool
 	
 	for i := 0; i < len(s.tokens); i++ {
-		token := s.tokens[i]
+		token := &s.tokens[i]
 		
 		if token.Type == FOR {
 			forFound = true
 			s.addInfo("Bucle 'for' detectado - Analizando estructura")
 		}
 		
-		// Analizar inicialización del bucle
 		if forFound && token.Type == IDENTIFIER && i > 0 && 
-			(s.tokens[i-1].Type == KEYWORD || s.tokens[i-1].Type == TYPE) {
+		   (s.tokens[i-1].Type == KEYWORD || s.tokens[i-1].Type == TYPE) {
 			loopVar = token.Value
 			
-			// Buscar valor inicial
 			if i+2 < len(s.tokens) && s.tokens[i+1].Type == ASSIGNMENT {
 				if val, err := strconv.Atoi(s.tokens[i+2].Value); err == nil {
 					startValue = val
-					s.addInfo(fmt.Sprintf("Variable de control '%s' inicializada con valor %d", loopVar, startValue))
+					s.addInfo("Variable de control '" + loopVar + "' inicializada con valor " + 
+						strconv.Itoa(startValue))
 				}
 			}
 		}
 		
-		// Analizar condición del bucle
 		if forFound && token.Type == COMPARISON && i > 0 && i+1 < len(s.tokens) {
 			hasCondition = true
 			operator := token.Value
@@ -259,16 +255,15 @@ func (s *Semantic) analyzeForLoop() {
 				conditionVar = s.tokens[i-1].Value
 				if val, err := strconv.Atoi(s.tokens[i+1].Value); err == nil {
 					endValue = val
-					s.addInfo(fmt.Sprintf("Condición: '%s %s %d' - Variable de control se compara con %d", 
-						conditionVar, operator, endValue, endValue))
+					s.addInfo("Condición: '" + conditionVar + " " + operator + " " + 
+						strconv.Itoa(endValue) + "' - Variable de control se compara con " + 
+						strconv.Itoa(endValue))
 					
-					// Verificar coherencia de la condición
 					s.checkLoopConditionCoherence(operator, startValue, endValue)
 				}
 			}
 		}
 		
-		// Analizar incremento
 		if forFound && token.Type == INCREMENT {
 			if i > 0 && s.tokens[i-1].Type == IDENTIFIER {
 				incrementVar = s.tokens[i-1].Value
@@ -276,20 +271,18 @@ func (s *Semantic) analyzeForLoop() {
 				incrementVar = s.tokens[i+1].Value
 			}
 			
-			s.addInfo(fmt.Sprintf("Incremento detectado para variable '%s' (%s)", incrementVar, token.Value))
+			s.addInfo("Incremento detectado para variable '" + incrementVar + "' (" + token.Value + ")")
 		}
 	}
 	
-	// Verificar consistencia de variables en el bucle
 	if forFound && loopVar != "" {
 		s.checkLoopVariableConsistency(loopVar, conditionVar, incrementVar)
 	}
 	
-	// Análisis completo del bucle
 	if forFound && hasCondition {
 		iterations := s.calculateIterations(startValue, endValue)
 		if iterations > 0 {
-			s.addInfo(fmt.Sprintf("El bucle ejecutará aproximadamente %d iteraciones", iterations))
+			s.addInfo("El bucle ejecutará aproximadamente " + strconv.Itoa(iterations) + " iteraciones")
 		}
 	}
 }
@@ -315,36 +308,34 @@ func (s *Semantic) calculateIterations(start, end int) int {
 }
 
 func (s *Semantic) checkVariableUsage() {
-	usedVars := make(map[string]bool)
+	usedVars := make(map[string]bool, len(s.variables))
 	
-	for _, token := range s.tokens {
-		if token.Type == IDENTIFIER {
-			if _, exists := s.variables[token.Value]; exists {
-				usedVars[token.Value] = true
+	for i := range s.tokens {
+		if s.tokens[i].Type == IDENTIFIER {
+			if _, exists := s.variables[s.tokens[i].Value]; exists {
+				usedVars[s.tokens[i].Value] = true
 			}
 		}
 	}
 	
-	for varName, varInfo := range s.variables {
+	for varName := range s.variables {
 		if !usedVars[varName] {
-			s.addInfo(fmt.Sprintf("⚠️ Variable '%s' declarada pero no utilizada", varName))
+			s.addInfo("⚠️ Variable '" + varName + "' declarada pero no utilizada")
 		} else {
-			s.addInfo(fmt.Sprintf("✓ Variable '%s' declarada y utilizada correctamente", varName))
-			varInfo=varInfo
+			s.addInfo("✓ Variable '" + varName + "' declarada y utilizada correctamente")
 		}
 	}
 }
 
 func (s *Semantic) analyzeInfiniteLoop() {
-	// Detectar posibles bucles infinitos
 	hasIncrement := false
 	hasValidCondition := false
 	
-	for _, token := range s.tokens {
-		if token.Type == INCREMENT {
+	for i := range s.tokens {
+		switch s.tokens[i].Type {
+		case INCREMENT:
 			hasIncrement = true
-		}
-		if token.Type == COMPARISON {
+		case COMPARISON:
 			hasValidCondition = true
 		}
 	}
@@ -356,41 +347,41 @@ func (s *Semantic) analyzeInfiniteLoop() {
 	}
 }
 
+// Función optimizada con switch
 func (s *Semantic) inferType(declaration string) string {
-	switch strings.ToLower(declaration) {
+	switch declaration {
 	case "int":
-		return "number"
+		return typeNumber
 	case "string":
-		return "string"
+		return typeString
 	case "let":
-		return "variable"
+		return typeVariable
 	case "const":
-		return "constant"
+		return typeConstant
 	case "var":
-		return "variable"
+		return typeVariable
 	default:
-		return "unknown"
+		return typeUnknown
 	}
 }
 
 func (s *Semantic) checkLoopVariableConsistency(loopVar, conditionVar, incrementVar string) {
-	// Verificar que la variable de condición sea la misma que la declarada
 	if conditionVar != "" && conditionVar != loopVar {
-		s.addInfo(fmt.Sprintf("❌ ERROR SEMÁNTICO: Variable en condición '%s' no coincide con variable de control '%s'", 
-			conditionVar, loopVar))
+		s.addInfo("❌ ERROR SEMÁNTICO: Variable en condición '" + conditionVar + 
+			"' no coincide con variable de control '" + loopVar + "'")
 	} else if conditionVar == loopVar {
-		s.addInfo(fmt.Sprintf("✓ Variable de condición '%s' coincide correctamente con variable de control", conditionVar))
+		s.addInfo("✓ Variable de condición '" + conditionVar + 
+			"' coincide correctamente con variable de control")
 	}
 	
-	// Verificar que la variable de incremento sea la misma que la declarada
 	if incrementVar != "" && incrementVar != loopVar {
-		s.addInfo(fmt.Sprintf("❌ ERROR SEMÁNTICO: Variable en incremento '%s' no coincide con variable de control '%s'", 
-			incrementVar, loopVar))
+		s.addInfo("❌ ERROR SEMÁNTICO: Variable en incremento '" + incrementVar + 
+			"' no coincide con variable de control '" + loopVar + "'")
 	} else if incrementVar == loopVar {
-		s.addInfo(fmt.Sprintf("✓ Variable de incremento '%s' coincide correctamente con variable de control", incrementVar))
+		s.addInfo("✓ Variable de incremento '" + incrementVar + 
+			"' coincide correctamente con variable de control")
 	}
 	
-	// Verificar que la variable de control esté siendo utilizada en todas las partes
 	if conditionVar == "" {
 		s.addInfo("⚠️ ADVERTENCIA: No se detectó variable en la condición del bucle")
 	}

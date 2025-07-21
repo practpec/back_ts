@@ -1,8 +1,7 @@
-
 package main
 
 import (
-	"fmt"
+	"strconv"
 )
 
 type Parser struct {
@@ -11,11 +10,84 @@ type Parser struct {
 	errors   []string
 }
 
+// Pool de strings para reutilizar mensajes de error comunes
+var (
+	errorEOF = "Se llegó al final del código inesperadamente"
+	errorSemicolon = "Se esperaba punto y coma"
+	errorIdentifier = "Se esperaba identificador"
+	errorAssignment = "Se esperaba operador de asignación"
+	errorValue = "Se esperaba valor"
+)
+
+func NewParser(tokens []Token) *Parser {
+	// Pre-filtrar tokens de whitespace una sola vez
+	filteredTokens := make([]Token, 0, len(tokens))
+	for i := range tokens {
+		if tokens[i].Type != WHITESPACE {
+			filteredTokens = append(filteredTokens, tokens[i])
+		}
+	}
+	
+	return &Parser{
+		tokens:   filteredTokens,
+		position: 0,
+		errors:   make([]string, 0, 4), // Pre-allocar con capacidad estimada
+	}
+}
+
+func (p *Parser) Parse() []string {
+	for p.position < len(p.tokens) {
+		token := &p.tokens[p.position]
+		
+		switch token.Type {
+		case FOR:
+			p.parseForStatement()
+		case DO:
+			p.parseDoWhileStatement()
+		case KEYWORD, TYPE:
+			p.parseVariableDeclaration()
+		default:
+			p.position++
+		}
+	}
+	return p.errors
+}
+
+// Función inline optimizada para agregar errores
 func (p *Parser) addError(message string) {
 	p.errors = append(p.errors, message)
 }
+
+// Función optimizada para obtener token actual
+func (p *Parser) currentToken() *Token {
+	if p.position >= len(p.tokens) {
+		return nil
+	}
+	return &p.tokens[p.position]
+}
+
+// Función optimizada para consumir tokens
+func (p *Parser) consume(expectedType TokenType) bool {
+	token := p.currentToken()
+	if token == nil {
+		p.addError(errorEOF)
+		return false
+	}
+	
+	if token.Type != expectedType {
+		// Usar strconv optimizado para convertir números
+		p.addError("Se esperaba " + string(expectedType) + " pero se encontró " + string(token.Type) + 
+			" '" + token.Value + "' en línea " + strconv.Itoa(token.Line) + 
+			", columna " + strconv.Itoa(token.Column))
+		return false
+	}
+	
+	p.position++
+	return true
+}
+
 func (p *Parser) parseVariableDeclaration() {
-	// Consumir palabra clave (let, const, var) o tipo (int, etc.)
+	// Verificar palabra clave/tipo
 	if p.currentToken() != nil && (p.currentToken().Type == KEYWORD || p.currentToken().Type == TYPE) {
 		p.position++
 	}
@@ -25,10 +97,9 @@ func (p *Parser) parseVariableDeclaration() {
 		return
 	}
 	
-	// Verificar si hay declaración de tipo TypeScript (: tipo)
+	// Verificar declaración de tipo TypeScript opcional
 	if p.currentToken() != nil && p.currentToken().Type == COLON {
 		p.position++ // consume ':'
-		// Consumir tipo
 		if p.currentToken() != nil && (p.currentToken().Type == TYPE || p.currentToken().Type == IDENTIFIER) {
 			p.position++
 		} else {
@@ -42,177 +113,79 @@ func (p *Parser) parseVariableDeclaration() {
 		return
 	}
 	
-	// Valor - verificar que sea válido
+	// Valor
 	token := p.currentToken()
 	if token == nil {
-		p.addError("Se esperaba valor en declaración")
+		p.addError(errorValue)
 		return
 	}
 	
-	if token.Type == NUMBER {
+	switch token.Type {
+	case NUMBER, IDENTIFIER:
 		p.position++
-	} else if token.Type == IDENTIFIER {
-		p.position++
-	} else if token.Type == UNKNOWN {
-		p.addError(fmt.Sprintf("Número mal formado '%s' en línea %d, columna %d", token.Value, token.Line, token.Column))
+	case UNKNOWN:
+		p.addError("Número mal formado '" + token.Value + "' en línea " + 
+			strconv.Itoa(token.Line) + ", columna " + strconv.Itoa(token.Column))
 		p.position++
 		return
-	} else {
-		p.addError(fmt.Sprintf("Se esperaba número o identificador, se encontró %s", token.Type))
+	default:
+		p.addError("Se esperaba número o identificador, se encontró " + string(token.Type))
 		return
 	}
 	
-	// Punto y coma (opcional - solo advertencia si falta)
+	// Punto y coma opcional
 	if p.currentToken() != nil && p.currentToken().Type == SEMICOLON {
 		p.position++
 	} else {
-		// Verificar si la siguiente línea tiene contenido
 		nextToken := p.currentToken()
 		if nextToken != nil && nextToken.Line == token.Line {
-			p.addError(fmt.Sprintf("Se esperaba punto y coma o salto de línea después de la declaración en línea %d", token.Line))
+			p.addError("Se esperaba punto y coma o salto de línea después de la declaración en línea " + 
+				strconv.Itoa(token.Line))
 		}
 	}
-}
-
-func NewParser(tokens []Token) *Parser {
-	// Filter out whitespace tokens for parsing
-	var filteredTokens []Token
-	for _, token := range tokens {
-		if token.Type != WHITESPACE {
-			filteredTokens = append(filteredTokens, token)
-		}
-	}
-	
-	return &Parser{
-		tokens:   filteredTokens,
-		position: 0,
-		errors:   []string{},
-	}
-}
-
-func (p *Parser) Parse() []string {
-	for p.currentToken() != nil {
-		token := p.currentToken()
-		if token.Type == FOR {
-			p.parseForStatement()
-		} else if token.Type == DO {
-			p.parseDoWhileStatement()
-		} else if token.Type == KEYWORD || token.Type == TYPE {
-			// Parsear declaraciones de variables
-			p.parseVariableDeclaration()
-		} else {
-			p.position++
-		}
-	}
-	return p.errors
-}
-
-func (p *Parser) currentToken() *Token {
-	if p.position >= len(p.tokens) {
-		return nil
-	}
-	return &p.tokens[p.position]
-}
-
-func (p *Parser) consume(expectedType TokenType) bool {
-	token := p.currentToken()
-	if token == nil {
-		p.addError(fmt.Sprintf("Se esperaba %s pero se llegó al final del código", expectedType))
-		return false
-	}
-	
-	if token.Type != expectedType {
-		p.addError(fmt.Sprintf("Se esperaba %s pero se encontró %s '%s' en línea %d, columna %d", 
-			expectedType, token.Type, token.Value, token.Line, token.Column))
-		return false
-	}
-	
-	p.position++
-	return true
 }
 
 func (p *Parser) parseForStatement() {
-	// Verificar que comience con 'for'
-	if !p.consume(FOR) {
-		return
-	}
+	if !p.consume(FOR) { return }
+	if !p.consume(LPAREN) { return }
 	
-	// Paréntesis de apertura
-	if !p.consume(LPAREN) {
-		return
-	}
-	
-	// Inicialización: let/const/var identifier = value
 	p.parseInitialization()
+	if !p.consume(SEMICOLON) { return }
 	
-	// Punto y coma después de inicialización
-	if !p.consume(SEMICOLON) {
-		return
-	}
-	
-	// Condición: identifier comparison value
 	p.parseCondition()
+	if !p.consume(SEMICOLON) { return }
 	
-	// Punto y coma después de condición
-	if !p.consume(SEMICOLON) {
-		return
-	}
-	
-	// Incremento: identifier++ o ++identifier o identifier += value
 	p.parseIncrement()
+	if !p.consume(RPAREN) { return }
+	if !p.consume(LBRACE) { return }
 	
-	// Paréntesis de cierre
-	if !p.consume(RPAREN) {
-		return
-	}
-	
-	// Llave de apertura
-	if !p.consume(LBRACE) {
-		return
-	}
-	
-	// Cuerpo del bucle (statements)
 	p.parseStatements()
-	
-	// Llave de cierre
-	if !p.consume(RBRACE) {
-		return
-	}
+	if !p.consume(RBRACE) { return }
 }
 
 func (p *Parser) parseInitialization() {
-	// Verificar declaración de variable
 	token := p.currentToken()
 	if token == nil {
 		p.addError("Se esperaba declaración de variable en inicialización")
 		return
 	}
 	
-	// Puede ser let, const, var, o tipo como int
 	if token.Type == KEYWORD || token.Type == TYPE {
 		p.position++
 	}
 	
-	// Nombre de variable
-	if !p.consume(IDENTIFIER) {
-		return
-	}
+	if !p.consume(IDENTIFIER) { return }
 	
-	// Verificar si hay declaración de tipo TypeScript (: tipo)
+	// Tipo TypeScript opcional
 	if p.currentToken() != nil && p.currentToken().Type == COLON {
-		p.position++ // consume ':'
-		// Consumir tipo
+		p.position++
 		if p.currentToken() != nil && (p.currentToken().Type == TYPE || p.currentToken().Type == IDENTIFIER) {
 			p.position++
 		}
 	}
 	
-	// Operador de asignación
-	if !p.consume(ASSIGNMENT) {
-		return
-	}
+	if !p.consume(ASSIGNMENT) { return }
 	
-	// Valor
 	token = p.currentToken()
 	if token == nil {
 		p.addError("Se esperaba valor en inicialización")
@@ -222,22 +195,14 @@ func (p *Parser) parseInitialization() {
 	if token.Type == NUMBER || token.Type == IDENTIFIER {
 		p.position++
 	} else {
-		p.addError(fmt.Sprintf("Se esperaba número o identificador en inicialización, se encontró %s", token.Type))
+		p.addError("Se esperaba número o identificador en inicialización, se encontró " + string(token.Type))
 	}
 }
 
 func (p *Parser) parseCondition() {
-	// Identificador
-	if !p.consume(IDENTIFIER) {
-		return
-	}
+	if !p.consume(IDENTIFIER) { return }
+	if !p.consume(COMPARISON) { return }
 	
-	// Operador de comparación
-	if !p.consume(COMPARISON) {
-		return
-	}
-	
-	// Valor
 	token := p.currentToken()
 	if token == nil {
 		p.addError("Se esperaba valor en condición")
@@ -247,7 +212,7 @@ func (p *Parser) parseCondition() {
 	if token.Type == NUMBER || token.Type == IDENTIFIER {
 		p.position++
 	} else {
-		p.addError(fmt.Sprintf("Se esperaba número o identificador en condición, se encontró %s", token.Type))
+		p.addError("Se esperaba número o identificador en condición, se encontró " + string(token.Type))
 	}
 }
 
@@ -258,12 +223,9 @@ func (p *Parser) parseIncrement() {
 		return
 	}
 	
-	// Puede ser ++i, i++, i+=1, etc.
 	if token.Type == INCREMENT {
 		p.position++
-		if !p.consume(IDENTIFIER) {
-			return
-		}
+		if !p.consume(IDENTIFIER) { return }
 	} else if token.Type == IDENTIFIER {
 		p.position++
 		nextToken := p.currentToken()
@@ -276,7 +238,6 @@ func (p *Parser) parseIncrement() {
 			p.position++
 		} else if nextToken.Type == ASSIGNMENT {
 			p.position++
-			// Consumir valor
 			valueToken := p.currentToken()
 			if valueToken == nil {
 				p.addError("Se esperaba valor después del operador de asignación")
@@ -296,11 +257,9 @@ func (p *Parser) parseIncrement() {
 }
 
 func (p *Parser) parseStatements() {
-	// Parsear el cuerpo del bucle - simplificado para el ejemplo
 	for p.currentToken() != nil && p.currentToken().Type != RBRACE {
 		token := p.currentToken()
 		
-		// Ejemplo básico: console.log o system.out.println
 		if token.Type == IDENTIFIER || token.Type == KEYWORD {
 			p.parseStatement()
 		} else {
@@ -310,33 +269,30 @@ func (p *Parser) parseStatements() {
 }
 
 func (p *Parser) parseStatement() {
-	// Simplificado - puede ser una llamada a función como console.log() o asignación
 	token := p.currentToken()
-	if token == nil {
-		return
-	}
+	if token == nil { return }
 	
-	// Identificador (console, system, variable, etc.)
 	if token.Type == IDENTIFIER || token.Type == KEYWORD {
 		p.position++
 		
-		// Puede tener punto para acceso a propiedades
+		// Acceso a propiedades con punto
 		if p.currentToken() != nil && p.currentToken().Value == "." {
-			p.position++ // consume '.'
+			p.position++
 			if p.currentToken() != nil && p.currentToken().Type == IDENTIFIER {
-				p.position++ // consume método
+				p.position++
 			}
 		}
 		
-		// Paréntesis para llamada a función
+		// Llamada a función
 		if p.currentToken() != nil && p.currentToken().Type == LPAREN {
 			p.position++
 			
-			// Argumentos (simplificado)
+			// Argumentos simplificados
 			for p.currentToken() != nil && p.currentToken().Type != RPAREN {
 				if p.currentToken().Type == UNKNOWN {
-					p.addError(fmt.Sprintf("Token inválido '%s' en expresión en línea %d, columna %d", 
-						p.currentToken().Value, p.currentToken().Line, p.currentToken().Column))
+					p.addError("Token inválido '" + p.currentToken().Value + 
+						"' en expresión en línea " + strconv.Itoa(p.currentToken().Line) + 
+						", columna " + strconv.Itoa(p.currentToken().Column))
 				}
 				p.position++
 			}
@@ -345,14 +301,11 @@ func (p *Parser) parseStatement() {
 				p.position++
 			}
 		} else if p.currentToken() != nil && p.currentToken().Type == ASSIGNMENT {
-			// Es una asignación
-			p.position++ // consume '='
-			
-			// Parsear expresión del lado derecho
+			p.position++
 			p.parseExpression()
 		}
 		
-		// Punto y coma (opcional)
+		// Punto y coma opcional
 		if p.currentToken() != nil && p.currentToken().Type == SEMICOLON {
 			p.position++
 		}
@@ -360,95 +313,64 @@ func (p *Parser) parseStatement() {
 }
 
 func (p *Parser) parseExpression() {
-	// Parsear expresión simple (número, variable, o operación)
-	lastTokenType := ""
+	lastTokenType := UNKNOWN
 	
-	for p.currentToken() != nil && 
-		(p.currentToken().Type == NUMBER || 
-		 p.currentToken().Type == IDENTIFIER || 
-		 p.currentToken().Type == OPERATOR ||
-		 p.currentToken().Type == UNKNOWN) {
-		
+	for p.currentToken() != nil {
 		currentToken := p.currentToken()
 		
+		// Verificar si es un token válido en expresión
+		if currentToken.Type != NUMBER && currentToken.Type != IDENTIFIER && 
+		   currentToken.Type != OPERATOR && currentToken.Type != UNKNOWN {
+			break
+		}
+		
 		if currentToken.Type == UNKNOWN {
-			p.addError(fmt.Sprintf("Token inválido '%s' en expresión en línea %d, columna %d", 
-				currentToken.Value, currentToken.Line, currentToken.Column))
+			p.addError("Token inválido '" + currentToken.Value + 
+				"' en expresión en línea " + strconv.Itoa(currentToken.Line) + 
+				", columna " + strconv.Itoa(currentToken.Column))
 		}
 		
-		// Verificar secuencias inválidas
-		if lastTokenType == "NUMBER" && currentToken.Type == IDENTIFIER {
-			p.addError(fmt.Sprintf("Error de sintaxis: número '%s' seguido de identificador '%s' sin operador en línea %d, columna %d", 
-				p.tokens[p.position-1].Value, currentToken.Value, currentToken.Line, currentToken.Column))
+		// Verificar secuencias inválidas usando switch optimizado
+		switch {
+		case lastTokenType == NUMBER && currentToken.Type == IDENTIFIER:
+			p.addError("Error de sintaxis: número seguido de identificador sin operador en línea " + 
+				strconv.Itoa(currentToken.Line))
+		case lastTokenType == IDENTIFIER && currentToken.Type == NUMBER:
+			p.addError("Error de sintaxis: identificador seguido de número sin operador en línea " + 
+				strconv.Itoa(currentToken.Line))
+		case lastTokenType == NUMBER && currentToken.Type == NUMBER:
+			p.addError("Error de sintaxis: dos números consecutivos sin operador en línea " + 
+				strconv.Itoa(currentToken.Line))
+		case lastTokenType == IDENTIFIER && currentToken.Type == IDENTIFIER:
+			p.addError("Error de sintaxis: dos identificadores consecutivos sin operador en línea " + 
+				strconv.Itoa(currentToken.Line))
 		}
 		
-		if lastTokenType == "IDENTIFIER" && currentToken.Type == NUMBER {
-			p.addError(fmt.Sprintf("Error de sintaxis: identificador '%s' seguido de número '%s' sin operador en línea %d, columna %d", 
-				p.tokens[p.position-1].Value, currentToken.Value, currentToken.Line, currentToken.Column))
-		}
-		
-		if lastTokenType == "NUMBER" && currentToken.Type == NUMBER {
-			p.addError(fmt.Sprintf("Error de sintaxis: dos números consecutivos '%s' '%s' sin operador en línea %d, columna %d", 
-				p.tokens[p.position-1].Value, currentToken.Value, currentToken.Line, currentToken.Column))
-		}
-		
-		if lastTokenType == "IDENTIFIER" && currentToken.Type == IDENTIFIER {
-			p.addError(fmt.Sprintf("Error de sintaxis: dos identificadores consecutivos '%s' '%s' sin operador en línea %d, columna %d", 
-				p.tokens[p.position-1].Value, currentToken.Value, currentToken.Line, currentToken.Column))
-		}
-		
-		lastTokenType = string(currentToken.Type)
+		lastTokenType = currentToken.Type
 		p.position++
 		
-		// Salir si llegamos a un delimitador
-		if p.currentToken() != nil && 
-			(p.currentToken().Type == SEMICOLON || 
-			 p.currentToken().Type == RBRACE ||
-			 p.currentToken().Type == RPAREN) {
-			break
+		// Verificar delimitadores
+		if p.currentToken() != nil {
+			tokenType := p.currentToken().Type
+			if tokenType == SEMICOLON || tokenType == RBRACE || tokenType == RPAREN {
+				break
+			}
 		}
 	}
 }
 
 func (p *Parser) parseDoWhileStatement() {
-	// Verificar que comience con 'do'
-	if !p.consume(DO) {
-		return
-	}
+	if !p.consume(DO) { return }
+	if !p.consume(LBRACE) { return }
 	
-	// Llave de apertura
-	if !p.consume(LBRACE) {
-		return
-	}
-	
-	// Cuerpo del bucle
 	p.parseStatements()
 	
-	// Llave de cierre
-	if !p.consume(RBRACE) {
-		return
-	}
+	if !p.consume(RBRACE) { return }
+	if !p.consume(WHILE) { return }
+	if !p.consume(LPAREN) { return }
 	
-	// Palabra clave 'while'
-	if !p.consume(WHILE) {
-		return
-	}
-	
-	// Paréntesis de apertura
-	if !p.consume(LPAREN) {
-		return
-	}
-	
-	// Condición
 	p.parseCondition()
 	
-	// Paréntesis de cierre
-	if !p.consume(RPAREN) {
-		return
-	}
-	
-	// Punto y coma final
-	if !p.consume(SEMICOLON) {
-		return
-	}
+	if !p.consume(RPAREN) { return }
+	if !p.consume(SEMICOLON) { return }
 }
